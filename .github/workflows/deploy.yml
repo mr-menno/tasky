@@ -1,0 +1,59 @@
+name: Build and Deploy to EKS
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      # Step 1: Checkout the repository
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+      
+      # Step 2: Set up Docker Buildx (for multi-platform builds)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      # Step 3: Log in to Amazon ECR
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v1
+
+      # Step 4: Build Docker image and push to ECR
+      - name: Build and Push Docker Image
+        run: |
+          IMAGE_NAME=<your-ecr-repository-name>
+          AWS_REGION=<your-aws-region>
+          IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_NAME}:latest"
+
+          # Build Docker image
+          docker build -t $IMAGE_URI .
+          
+          # Push to ECR
+          docker push $IMAGE_URI
+
+      # Step 5: Set up AWS CLI and configure with GitHub OIDC
+      - name: Set up AWS CLI
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: arn:aws:iam::<aws-account-id>:role/<role-name>
+          aws-region: <your-aws-region>
+          web-identity-token-file: ${{ github.token }}
+
+      # Step 6: Deploy the Docker image to EKS
+      - name: Deploy to EKS
+        run: |
+          kubectl config set-cluster eks-cluster --server=https://<eks-cluster-endpoint>
+          kubectl config set-credentials eks-service-account --token=$(aws sts get-caller-identity --query Arn --output text)
+          kubectl config set-context eks-context --cluster=eks-cluster --user=eks-service-account
+          kubectl config use-context eks-context
+
+          # Update the Kubernetes Deployment with the new Docker image
+          kubectl set image deployment/my-app my-app=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_NAME}:latest
+          kubectl rollout status deployment/my-app
